@@ -18,12 +18,12 @@ sudo docker run --rm -i -t --name falco --privileged  \
     -v /var/run/docker.sock:/host/var/run/docker.sock \
     -v /dev:/host/dev -v /proc:/host/proc:ro -v /boot:/host/boot:ro \
     -v /lib/modules:/host/lib/modules:ro -v /usr:/host/usr:ro -v /etc:/host/etc:ro \
-  -v $(pwd)/target/release/librand_generator_plugin.so:/usr/share/falco/plugins/librand_generator_plugin.so \
-  -v $(pwd)/example_rule.yaml:/etc/falco/example_rule.yaml \
+    -v $(pwd)/target/release/librand_generator_plugin.so:/usr/share/falco/plugins/librand_generator_plugin.so \
+    -v $(pwd)/example_rule.yaml:/etc/falco/example_rule.yaml \
     falcosecurity/falco:latest falco \
-  -o 'plugins[]={"name":"random_generator","library_path":"/usr/share/falco/plugins/librand_generator_plugin.so","init_config":{"range":1000}}' \
-  -o load_plugins[]=random_generator \
-  -o rules_files[]=/etc/falco/example_rule.yaml
+    -o 'plugins[]={"name":"random_generator","library_path":"/usr/share/falco/plugins/librand_generator_plugin.so","init_config":{"range":1000}}' \
+    -o load_plugins[]=random_generator \
+    -o rules_files[]=/etc/falco/example_rule.yaml
 ```
 
 Note that the configuration above can be replicated in your local `falco.yaml`, if you already have Falco installed like so:
