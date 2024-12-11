@@ -8,6 +8,4 @@ crate-type = ["cdylib"]
 
 [dependencies]
 falco_plugin = { git = "https://github.com/falcosecurity/plugin-sdk-rs" }
-falco_plugin_runner = { git = "https://github.com/falcosecurity/plugin-sdk-rs" }
-postgres = "0.19.9"
 rand = "0.8.5"
