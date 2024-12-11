@@ -1,0 +1,8 @@
+- rule: random number generated
+  desc: >
+    random number generated
+  condition: gen.num > 0
+  output: "A random number was generated: %gen.num"
+  priority: INFO
+  source: random_generator
+  tags: [random_generator]
