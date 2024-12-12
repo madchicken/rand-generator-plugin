@@ -2,6 +2,7 @@ use falco_plugin::anyhow::{anyhow, Error};
 use falco_plugin::base::{Json, Plugin};
 use falco_plugin::event::events::types::{EventType, PPME_PLUGINEVENT_E};
 use falco_plugin::extract::{field, EventInput, ExtractFieldInfo, ExtractPlugin, ExtractRequest};
+use std::thread;
 use falco_plugin::schemars::JsonSchema;
 use falco_plugin::serde::Deserialize;
 use falco_plugin::source::{EventBatch, PluginEvent, SourcePlugin, SourcePluginInstance};
@@ -10,6 +11,7 @@ use falco_plugin::strings::CStringWriter;
 use falco_plugin::tables::TablesInput;
 use rand::Rng;
 use std::collections::BTreeMap;
+use std::time::{self, Duration, Instant};
 use std::ffi::{CStr, CString};
 use std::io::Write;
 use rand::prelude::ThreadRng;
@@ -25,7 +27,9 @@ pub struct RandomGenPlugin {
     histogram: BTreeMap<u64, u64>,
 
     /// Random number generator
-    thread_range: ThreadRng
+    thread_range: ThreadRng,
+
+    next_event_ts: time::Instant,
 }
 
 #[derive(JsonSchema, Deserialize)]
@@ -48,7 +52,8 @@ impl Plugin for RandomGenPlugin {
         Ok(Self {
             range: config.range,
             histogram: BTreeMap::new(),
-            thread_range: rand::thread_rng()
+            thread_range: rand::thread_rng(),
+            next_event_ts: time::Instant::now(),
         })
     }
 
@@ -77,8 +82,11 @@ impl SourcePluginInstance for RandomGenPluginInstance {
         plugin: &mut Self::Plugin,
         batch: &mut EventBatch,
     ) -> Result<(), Error> {
-
+        if plugin.next_event_ts > time::Instant::now() {
+            thread::sleep(plugin.next_event_ts - time::Instant::now());
+        }
         let num: u64 = plugin.thread_range.gen_range(0..plugin.range);
+        plugin.next_event_ts = plugin.next_event_ts + Duration::from_millis(500);
         let event = num.to_le_bytes().to_vec();
 
         // Add the encoded u64 value to the batch
@@ -120,6 +128,10 @@ impl SourcePlugin for RandomGenPlugin {
 }
 
 impl RandomGenPlugin {
+    pub fn new(range: u64, histogram: BTreeMap<u64, u64>, thread_range: ThreadRng, next_event_ts: Instant) -> Self {
+        Self { range, histogram, thread_range, next_event_ts }
+    }
+
     /// Reads the raw event payload and converts it to u64 value.
     fn extract_number(&mut self, req: ExtractRequest<Self>) -> Result<u64, Error> {
         let event = req.event.event()?;
@@ -141,28 +153,6 @@ impl RandomGenPlugin {
         }
     }
 }
-
-/// Event Parsing Capability
-// impl ParsePlugin for RandomGenPlugin {
-//     const EVENT_TYPES: &'static [EventType] = &[]; // inspect all events...
-//     const EVENT_SOURCES: &'static [&'static str] = &["random_generator"]; // ... from this plugin's source
-//
-//     fn parse_event(&mut self, event: &EventInput, _parse_input: &ParseInput) -> Result<(), Error> {
-//         let event = event.event()?;
-//         let event = event.load::<PluginEvent>()?;
-//         let buf = event
-//             .params
-//             .event_data
-//             .ok_or_else(|| anyhow!("Missing event data"))?;
-//
-//         let num = u64::from_le_bytes(buf.try_into()?);
-//
-//         // increase the number of occurrences of `num` in the histogram
-//         *self.histogram.entry(num).or_insert(0) += 1;
-//
-//         Ok(())
-//     }
-// }
 
 /// Implement the field extraction capability
 /// https://falco.org/docs/plugins/architecture/#field-extraction-capability
