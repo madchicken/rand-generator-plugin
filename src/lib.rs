@@ -32,8 +32,6 @@ pub struct RandomGenPlugin {
 
     /// Random number generator
     thread_range: Arc<Mutex<StdRng>>,
-
-    mutex: Arc<Mutex<bool>>,
 }
 
 #[derive(JsonSchema, Deserialize)]
@@ -57,7 +55,6 @@ impl Plugin for RandomGenPlugin {
             range: config.range,
             histogram: Arc::new(Mutex::new(BTreeMap::new())),
             thread_range: Arc::new(Mutex::new(StdRng::from_entropy())),
-            mutex: Arc::new(Mutex::new(false)),
         })
     }
 
@@ -108,7 +105,6 @@ impl AsyncEventPlugin for RandomGenPlugin {
     // https://falcosecurity.github.io/plugin-sdk-rs/falco_plugin/async_event/struct.BackgroundTask.html
     fn start_async(&mut self, handler: AsyncHandler) -> Result<(), Error> {
         let rng = self.thread_range.clone();
-        let mutex = self.mutex.clone();
         let range = self.range;
         spawn(move || {
             loop {
@@ -133,20 +129,12 @@ impl AsyncEventPlugin for RandomGenPlugin {
                     }
                 }
                 sleep(std::time::Duration::from_secs(1));
-                if *mutex.lock().unwrap() {
-                    println!("Stopping async event generation thread");
-                    break;
-                }
             }
         });
         Ok(())
     }
 
     fn stop_async(&mut self) -> Result<(), Error> {
-        if let Ok(mut guard) = self.mutex.lock() {
-            println!("Stopping async event generation");
-            *guard = true;
-        }
         Ok(())
     }
 }
