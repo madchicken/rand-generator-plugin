@@ -1,7 +1,7 @@
-use falco_plugin::anyhow::{anyhow, Error};
+use falco_plugin::anyhow::{anyhow, bail, Error};
 use falco_plugin::async_event::{AsyncEvent, AsyncEventPlugin, AsyncHandler};
 use falco_plugin::base::{Json, Plugin};
-use falco_plugin::event::events::types::{EventType};
+use falco_plugin::event::events::types::{EventType, PPME_PLUGINEVENT_E};
 use falco_plugin::event::events::{Event, EventMetadata};
 use falco_plugin::extract::{field, EventInput, ExtractFieldInfo, ExtractPlugin, ExtractRequest};
 use falco_plugin::parse::{ParseInput, ParsePlugin};
@@ -10,7 +10,7 @@ use falco_plugin::serde::Deserialize;
 use falco_plugin::source::{EventBatch, PluginEvent, SourcePlugin, SourcePluginInstance};
 use falco_plugin::strings::CStringWriter;
 use falco_plugin::tables::TablesInput;
-use falco_plugin::{async_event_plugin, extract_plugin, parse_plugin, plugin, source_plugin};
+use falco_plugin::{anyhow, async_event_plugin, extract_plugin, parse_plugin, plugin, source_plugin};
 use rand::prelude::ThreadRng;
 use rand::rngs::StdRng;
 use rand::{Rng, SeedableRng};
@@ -66,37 +66,57 @@ impl Plugin for RandomGenPlugin {
 /// Plugin instance
 pub struct RandomGenPluginInstance;
 
+impl SourcePluginInstance for RandomGenPluginInstance {
+    type Plugin = RandomGenPlugin;
+
+    /// # Fill the next batch of events
+    ///
+    fn next_batch(
+        &mut self,
+        plugin: &mut Self::Plugin,
+        batch: &mut EventBatch,
+    ) -> Result<(), anyhow::Error> {
+        Ok(())
+    }
+}
+
 /// Implement SourcePluginInstance and generate the events
-// impl SourcePluginInstance for RandomGenPluginInstance {
-//     type Plugin = RandomGenPlugin;
-//
-//     /// # Fill the next batch of events
-//     ///
-//     /// This is the most important method for the source plugin implementation. It is responsible
-//     /// for actually generating the events for the main event loop.
-//     ///
-//     /// For performance, events are returned in batches. Of course, it's entirely valid to have
-//     /// just a single event in a batch.
-//     ///
-//     fn next_batch(
-//         &mut self,
-//         plugin: &mut Self::Plugin,
-//         batch: &mut EventBatch,
-//     ) -> Result<(), Error> {
-//
-//         let num: u64 = plugin.thread_range.gen_range(0..plugin.range);
-//         let event = num.to_le_bytes().to_vec();
-//
-//         // Add the encoded u64 value to the batch
-//         let event = Self::plugin_event(&event);
-//         batch.add(event)?;
-//
-//         Ok(())
-//     }
-// }
+impl SourcePlugin for RandomGenPlugin {
+    type Instance = RandomGenPluginInstance;
+    const EVENT_SOURCE: &'static CStr = c"random_generator";
+    const PLUGIN_ID: u32 = 1234;
+
+    fn open(&mut self, params: Option<&str>) -> Result<Self::Instance, Error> {
+        Ok(RandomGenPluginInstance)
+    }
+
+    fn event_to_string(&mut self, event: &EventInput) -> Result<CString, Error> {
+        // Make sure we have a plugin event and parse it into individual fields
+        let event = event.event()?;
+        let event = event.load::<PPME_PLUGINEVENT_E>()?;
+
+        if event.params.plugin_id != Some(Self::PLUGIN_ID) {
+            // Falco shouldn't call this method for events from other plugins
+            bail!("Plugin IDs don't match");
+        }
+
+        // All event fields are optional, so we have to check if the data is actually there
+        match event.params.event_data {
+            Some(payload) => {
+                // CStringWriter is a small helper that lets you write arbitrary data
+                // (e.g. using format strings) into CStrings. Note that as CStrings cannot
+                // contain NUL bytes, any attempt to write one will fail.
+                let mut writer = CStringWriter::default();
+                writer.write_all(payload)?;
+                Ok(writer.into_cstring())
+            }
+            None => Ok(CString::new("<no payload>")?),
+        }
+    }
+}
 
 impl AsyncEventPlugin for RandomGenPlugin {
-    const ASYNC_EVENTS: &'static [&'static str] = &["random_generator"]; // generate any async events
+    const ASYNC_EVENTS: &'static [&'static str] = &["random_number"]; // generate any async events
     const EVENT_SOURCES: &'static [&'static str] = &[]; // attach to all event sources
 
     // This is useful when we have a background mechanism to generate the events.
@@ -111,8 +131,8 @@ impl AsyncEventPlugin for RandomGenPlugin {
                 let num: u64 = rng.lock().unwrap().gen_range(0..range);
                 let event = num.to_le_bytes().to_vec();
                 let event = AsyncEvent {
-                    plugin_id: Some(0),
-                    name: Some(c"random_generator"),
+                    plugin_id: Some(1234),
+                    name: Some(c"random_number"),
                     data: Some(&event),
                 };
                 let metadata = EventMetadata::default();
@@ -218,7 +238,7 @@ impl ExtractPlugin for RandomGenPlugin {
 }
 
 plugin!(RandomGenPlugin);
-//source_plugin!(RandomGenPlugin);
+source_plugin!(RandomGenPlugin);
 extract_plugin!(RandomGenPlugin);
 parse_plugin!(RandomGenPlugin);
 async_event_plugin!(RandomGenPlugin);
