@@ -128,7 +128,6 @@ impl AsyncEventPlugin for RandomGenPlugin {
                     Ok(_) => {}
                     Err(e) => {
                         eprintln!("Error emitting async event: {:?}", e);
-                        break;
                     }
                 }
                 sleep(std::time::Duration::from_secs(1));
