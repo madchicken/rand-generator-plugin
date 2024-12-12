@@ -142,6 +142,7 @@ impl ParsePlugin for RandomGenPlugin {
 
         // increase the number of occurrences of `num` in the histogram
         if let Ok(mut guard) = self.histogram.lock() {
+            println!("Parsed event: {}", num);
             *guard.entry(num).or_insert(0) += 1;
         }
 
