@@ -130,16 +130,13 @@ impl RandomGenPlugin {
 
 /// Event Parsing Capability
 impl ParsePlugin for RandomGenPlugin {
-    const EVENT_TYPES: &'static [EventType] = &[]; // inspect all events...
-    const EVENT_SOURCES: &'static [&'static str] = &["random_generator"]; // ... from this plugin's source
+    const EVENT_TYPES: &'static [EventType] = &[EventType::ASYNCEVENT_E]; // inspect all events...
+    const EVENT_SOURCES: &'static [&'static str] = &[]; // ... from this plugin's source
 
     fn parse_event(&mut self, event: &EventInput, _parse_input: &ParseInput) -> Result<(), Error> {
         let event = event.event()?;
-        let event = event.load::<PluginEvent>()?;
-        let buf = event
-            .params
-            .event_data
-            .ok_or_else(|| anyhow!("Missing event data"))?;
+        let async_event = event.load::<AsyncEvent>()?;
+        let buf = async_event.params.data.ok_or_else(|| anyhow!("Missing event data"))?;
 
         let num = u64::from_le_bytes(buf.try_into()?);
 
