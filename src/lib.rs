@@ -125,14 +125,16 @@ impl AsyncEventPlugin for RandomGenPlugin {
                     params: event,
                 };
                 match handler.emit(event) {
-                    Ok(_) => {}
+                    Ok(_) => {
+                        println!("Async event emitted {}", num);
+                    }
                     Err(e) => {
                         eprintln!("Error emitting async event: {:?}", e);
                     }
                 }
                 sleep(std::time::Duration::from_secs(1));
                 if *mutex.lock().unwrap() {
-                    println!("Stopping async event generation");
+                    println!("Stopping async event generation thread");
                     break;
                 }
             }
@@ -142,6 +144,7 @@ impl AsyncEventPlugin for RandomGenPlugin {
 
     fn stop_async(&mut self) -> Result<(), Error> {
         if let Ok(mut guard) = self.mutex.lock() {
+            println!("Stopping async event generation");
             *guard = true;
         }
         Ok(())
