@@ -100,7 +100,7 @@ pub struct RandomGenPluginInstance;
 
 impl AsyncEventPlugin for RandomGenPlugin {
     const ASYNC_EVENTS: &'static [&'static str] = &[]; // generate any async events
-    const EVENT_SOURCES: &'static [&'static str] = &["random_generator"]; // attach to all event sources
+    const EVENT_SOURCES: &'static [&'static str] = &[]; // attach to all event sources
 
     // This is useful when we have a background mechanism to generate the events.
     // In this example we're not doing that.
@@ -115,7 +115,7 @@ impl AsyncEventPlugin for RandomGenPlugin {
                 let num: u64 = rng.lock().unwrap().gen_range(0..range);
                 let event = num.to_le_bytes().to_vec();
                 let event = AsyncEvent {
-                    plugin_id: Some(1234),
+                    plugin_id: Some(0),
                     name: Some(c"random_generator"),
                     data: Some(&event),
                 };
@@ -124,7 +124,13 @@ impl AsyncEventPlugin for RandomGenPlugin {
                     metadata,
                     params: event,
                 };
-                handler.emit(event).unwrap();
+                match handler.emit(event) {
+                    Ok(_) => {}
+                    Err(e) => {
+                        eprintln!("Error emitting async event: {:?}", e);
+                        break;
+                    }
+                }
                 sleep(std::time::Duration::from_secs(1));
                 if *mutex.lock().unwrap() {
                     break;
