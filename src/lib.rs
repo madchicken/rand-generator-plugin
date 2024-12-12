@@ -12,6 +12,7 @@ use rand::Rng;
 use std::collections::BTreeMap;
 use std::ffi::{CStr, CString};
 use std::io::Write;
+use rand::prelude::ThreadRng;
 
 pub struct RandomGenPlugin {
     /// Specifies the range within witch the random
@@ -22,6 +23,9 @@ pub struct RandomGenPlugin {
     /// Keep track of all numbers generated with how
     /// many times each one occurred
     histogram: BTreeMap<u64, u64>,
+
+    /// Random number generator
+    thread_range: ThreadRng
 }
 
 #[derive(JsonSchema, Deserialize)]
@@ -44,6 +48,7 @@ impl Plugin for RandomGenPlugin {
         Ok(Self {
             range: config.range,
             histogram: BTreeMap::new(),
+            thread_range: rand::thread_rng()
         })
     }
 
@@ -72,9 +77,8 @@ impl SourcePluginInstance for RandomGenPluginInstance {
         plugin: &mut Self::Plugin,
         batch: &mut EventBatch,
     ) -> Result<(), Error> {
-        let mut rng = rand::thread_rng();
-        let num: u64 = rng.gen_range(0..plugin.range);
 
+        let num: u64 = plugin.thread_range.gen_range(0..plugin.range);
         let event = num.to_le_bytes().to_vec();
 
         // Add the encoded u64 value to the batch
