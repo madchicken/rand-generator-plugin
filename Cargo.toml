@@ -8,4 +8,4 @@ crate-type = ["cdylib"]
 
 [dependencies]
 falco_plugin = { git = "https://github.com/falcosecurity/plugin-sdk-rs" }
-rand = "0.8.5"
+rand = { version = "0.8.5"}

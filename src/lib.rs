@@ -1,23 +1,24 @@
 use falco_plugin::anyhow::{anyhow, Error};
+use falco_plugin::async_event::{AsyncEvent, AsyncEventPlugin, AsyncHandler};
 use falco_plugin::base::{Json, Plugin};
-use falco_plugin::event::events::types::{EventType, PPME_PLUGINEVENT_E};
+use falco_plugin::event::events::types::{EventType};
+use falco_plugin::event::events::{Event, EventMetadata};
 use falco_plugin::extract::{field, EventInput, ExtractFieldInfo, ExtractPlugin, ExtractRequest};
+use falco_plugin::parse::{ParseInput, ParsePlugin};
 use falco_plugin::schemars::JsonSchema;
 use falco_plugin::serde::Deserialize;
 use falco_plugin::source::{EventBatch, PluginEvent, SourcePlugin, SourcePluginInstance};
-use falco_plugin::{async_event_plugin, extract_plugin, parse_plugin, plugin, source_plugin};
 use falco_plugin::strings::CStringWriter;
 use falco_plugin::tables::TablesInput;
-use rand::Rng;
+use falco_plugin::{async_event_plugin, extract_plugin, parse_plugin, plugin, source_plugin};
+use rand::prelude::ThreadRng;
+use rand::rngs::StdRng;
+use rand::{Rng, SeedableRng};
 use std::collections::BTreeMap;
 use std::ffi::{CStr, CString};
 use std::io::Write;
 use std::sync::{Arc, Mutex};
 use std::thread::{sleep, spawn};
-use falco_plugin::async_event::{AsyncEvent, AsyncEventPlugin, AsyncHandler};
-use falco_plugin::event::events::{Event, EventMetadata};
-use falco_plugin::parse::{ParseInput, ParsePlugin};
-use rand::prelude::ThreadRng;
 
 pub struct RandomGenPlugin {
     /// Specifies the range within witch the random
@@ -27,10 +28,10 @@ pub struct RandomGenPlugin {
 
     /// Keep track of all numbers generated with how
     /// many times each one occurred
-    histogram: BTreeMap<u64, u64>,
+    histogram: Arc<Mutex<BTreeMap<u64, u64>>>,
 
     /// Random number generator
-    thread_range: ThreadRng,
+    thread_range: Arc<Mutex<StdRng>>,
 
     mutex: Arc<Mutex<bool>>,
 }
@@ -54,8 +55,8 @@ impl Plugin for RandomGenPlugin {
     fn new(_input: Option<&TablesInput>, Json(config): Self::ConfigType) -> Result<Self, Error> {
         Ok(Self {
             range: config.range,
-            histogram: BTreeMap::new(),
-            thread_range: rand::thread_rng(),
+            histogram: Arc::new(Mutex::new(BTreeMap::new())),
+            thread_range: Arc::new(Mutex::new(StdRng::from_entropy())),
             mutex: Arc::new(Mutex::new(false)),
         })
     }
@@ -106,9 +107,12 @@ impl AsyncEventPlugin for RandomGenPlugin {
     // The SDK provides a helper, you may want to check it:
     // https://falcosecurity.github.io/plugin-sdk-rs/falco_plugin/async_event/struct.BackgroundTask.html
     fn start_async(&mut self, handler: AsyncHandler) -> Result<(), Error> {
+        let rng = self.thread_range.clone();
+        let mutex = self.mutex.clone();
+        let range = self.range;
         spawn(move || {
             loop {
-                let num: u64 = self.thread_range.gen_range(0..self.range);
+                let num: u64 = rng.lock().unwrap().gen_range(0..range);
                 let event = num.to_le_bytes().to_vec();
                 let event = AsyncEvent {
                     plugin_id: Some(0),
@@ -122,7 +126,7 @@ impl AsyncEventPlugin for RandomGenPlugin {
                 };
                 handler.emit(event).unwrap();
                 sleep(std::time::Duration::from_secs(1));
-                if *self.mutex.lock().unwrap() {
+                if *mutex.lock().unwrap() {
                     break;
                 }
             }
@@ -131,41 +135,13 @@ impl AsyncEventPlugin for RandomGenPlugin {
     }
 
     fn stop_async(&mut self) -> Result<(), Error> {
-        *self.mutex.lock() = true;
+        if let Ok(mut guard) = self.mutex.lock() {
+            *guard = true;
+        }
         Ok(())
     }
 }
 
-
-/// Event sourcing capability
-impl SourcePlugin for RandomGenPlugin {
-    type Instance = RandomGenPluginInstance;
-    const EVENT_SOURCE: &'static CStr = c"random_generator";
-    const PLUGIN_ID: u32 = 1423;
-
-    fn open(&mut self, _params: Option<&str>) -> Result<Self::Instance, Error> {
-        Ok(RandomGenPluginInstance)
-    }
-
-    fn event_to_string(&mut self, event: &EventInput) -> Result<CString, Error> {
-        // Make sure we have a plugin event and parse it into individual fields
-        let event = event.event()?;
-        let event = event.load::<PPME_PLUGINEVENT_E>()?;
-
-        // All event fields are optional, so we have to check if the data is actually there
-        match event.params.event_data {
-            Some(payload) => {
-                // CStringWriter is a small helper that lets you write arbitrary data
-                // (e.g. using format strings) into CStrings. Note that as CStrings cannot
-                // contain NUL bytes, any attempt to write one will fail.
-                let mut writer = CStringWriter::default();
-                writer.write_all(payload)?;
-                Ok(writer.into_cstring())
-            }
-            None => Ok(CString::new("<no payload>")?),
-        }
-    }
-}
 
 impl RandomGenPlugin {
     /// Reads the raw event payload and converts it to u64 value.
@@ -183,9 +159,13 @@ impl RandomGenPlugin {
         // Get the count of occurrences of `num` from `self.histogram`.
         // If the number isn't there (hasn't been generated even once),
         // return zero
-        match self.histogram.get(&num) {
-            Some(count) => Ok(*count),
-            None => Ok(0),
+        if let Ok(mut guard) = self.histogram.lock() {
+            match guard.get(&num) {
+                Some(count) => Ok(*count),
+                None => Ok(0),
+            }
+        } else {
+            Ok(0)
         }
     }
 }
@@ -206,7 +186,9 @@ impl ParsePlugin for RandomGenPlugin {
         let num = u64::from_le_bytes(buf.try_into()?);
 
         // increase the number of occurrences of `num` in the histogram
-        *self.histogram.entry(num).or_insert(0) += 1;
+        if let Ok(mut guard) = self.histogram.lock() {
+            *guard.entry(num).or_insert(0) += 1;
+        }
 
         Ok(())
     }
@@ -239,7 +221,7 @@ impl ExtractPlugin for RandomGenPlugin {
 }
 
 plugin!(RandomGenPlugin);
-source_plugin!(RandomGenPlugin);
+//source_plugin!(RandomGenPlugin);
 extract_plugin!(RandomGenPlugin);
 parse_plugin!(RandomGenPlugin);
 async_event_plugin!(RandomGenPlugin);
