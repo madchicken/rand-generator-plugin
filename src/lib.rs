@@ -99,7 +99,7 @@ pub struct RandomGenPluginInstance;
 // }
 
 impl AsyncEventPlugin for RandomGenPlugin {
-    const ASYNC_EVENTS: &'static [&'static str] = &[]; // generate any async events
+    const ASYNC_EVENTS: &'static [&'static str] = &["random_generator"]; // generate any async events
     const EVENT_SOURCES: &'static [&'static str] = &[]; // attach to all event sources
 
     // This is useful when we have a background mechanism to generate the events.
@@ -132,6 +132,7 @@ impl AsyncEventPlugin for RandomGenPlugin {
                 }
                 sleep(std::time::Duration::from_secs(1));
                 if *mutex.lock().unwrap() {
+                    println!("Stopping async event generation");
                     break;
                 }
             }
