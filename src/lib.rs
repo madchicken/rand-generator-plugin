@@ -5,13 +5,18 @@ use falco_plugin::extract::{field, EventInput, ExtractFieldInfo, ExtractPlugin, 
 use falco_plugin::schemars::JsonSchema;
 use falco_plugin::serde::Deserialize;
 use falco_plugin::source::{EventBatch, PluginEvent, SourcePlugin, SourcePluginInstance};
-use falco_plugin::{extract_plugin, plugin, source_plugin};
+use falco_plugin::{async_event_plugin, extract_plugin, parse_plugin, plugin, source_plugin};
 use falco_plugin::strings::CStringWriter;
 use falco_plugin::tables::TablesInput;
 use rand::Rng;
 use std::collections::BTreeMap;
 use std::ffi::{CStr, CString};
 use std::io::Write;
+use std::sync::{Arc, Mutex};
+use std::thread::{sleep, spawn};
+use falco_plugin::async_event::{AsyncEvent, AsyncEventPlugin, AsyncHandler};
+use falco_plugin::event::events::{Event, EventMetadata};
+use falco_plugin::parse::{ParseInput, ParsePlugin};
 use rand::prelude::ThreadRng;
 
 pub struct RandomGenPlugin {
@@ -25,7 +30,9 @@ pub struct RandomGenPlugin {
     histogram: BTreeMap<u64, u64>,
 
     /// Random number generator
-    thread_range: ThreadRng
+    thread_range: ThreadRng,
+
+    mutex: Arc<Mutex<bool>>,
 }
 
 #[derive(JsonSchema, Deserialize)]
@@ -48,7 +55,8 @@ impl Plugin for RandomGenPlugin {
         Ok(Self {
             range: config.range,
             histogram: BTreeMap::new(),
-            thread_range: rand::thread_rng()
+            thread_range: rand::thread_rng(),
+            mutex: Arc::new(Mutex::new(false)),
         })
     }
 
@@ -61,33 +69,73 @@ impl Plugin for RandomGenPlugin {
 pub struct RandomGenPluginInstance;
 
 /// Implement SourcePluginInstance and generate the events
-impl SourcePluginInstance for RandomGenPluginInstance {
-    type Plugin = RandomGenPlugin;
+// impl SourcePluginInstance for RandomGenPluginInstance {
+//     type Plugin = RandomGenPlugin;
+//
+//     /// # Fill the next batch of events
+//     ///
+//     /// This is the most important method for the source plugin implementation. It is responsible
+//     /// for actually generating the events for the main event loop.
+//     ///
+//     /// For performance, events are returned in batches. Of course, it's entirely valid to have
+//     /// just a single event in a batch.
+//     ///
+//     fn next_batch(
+//         &mut self,
+//         plugin: &mut Self::Plugin,
+//         batch: &mut EventBatch,
+//     ) -> Result<(), Error> {
+//
+//         let num: u64 = plugin.thread_range.gen_range(0..plugin.range);
+//         let event = num.to_le_bytes().to_vec();
+//
+//         // Add the encoded u64 value to the batch
+//         let event = Self::plugin_event(&event);
+//         batch.add(event)?;
+//
+//         Ok(())
+//     }
+// }
 
-    /// # Fill the next batch of events
-    ///
-    /// This is the most important method for the source plugin implementation. It is responsible
-    /// for actually generating the events for the main event loop.
-    ///
-    /// For performance, events are returned in batches. Of course, it's entirely valid to have
-    /// just a single event in a batch.
-    ///
-    fn next_batch(
-        &mut self,
-        plugin: &mut Self::Plugin,
-        batch: &mut EventBatch,
-    ) -> Result<(), Error> {
+impl AsyncEventPlugin for RandomGenPlugin {
+    const ASYNC_EVENTS: &'static [&'static str] = &[]; // generate any async events
+    const EVENT_SOURCES: &'static [&'static str] = &[]; // attach to all event sources
 
-        let num: u64 = plugin.thread_range.gen_range(0..plugin.range);
-        let event = num.to_le_bytes().to_vec();
+    // This is useful when we have a background mechanism to generate the events.
+    // In this example we're not doing that.
+    // The SDK provides a helper, you may want to check it:
+    // https://falcosecurity.github.io/plugin-sdk-rs/falco_plugin/async_event/struct.BackgroundTask.html
+    fn start_async(&mut self, handler: AsyncHandler) -> Result<(), Error> {
+        spawn(move || {
+            loop {
+                let num: u64 = self.thread_range.gen_range(0..self.range);
+                let event = num.to_le_bytes().to_vec();
+                let event = AsyncEvent {
+                    plugin_id: Some(0),
+                    name: Some(c"random_generator"),
+                    data: Some(&event),
+                };
+                let metadata = EventMetadata::default();
+                let event = Event {
+                    metadata,
+                    params: event,
+                };
+                handler.emit(event).unwrap();
+                sleep(std::time::Duration::from_secs(1));
+                if *self.mutex.lock().unwrap() {
+                    break;
+                }
+            }
+        });
+        Ok(())
+    }
 
-        // Add the encoded u64 value to the batch
-        let event = Self::plugin_event(&event);
-        batch.add(event)?;
-
+    fn stop_async(&mut self) -> Result<(), Error> {
+        *self.mutex.lock() = true;
         Ok(())
     }
 }
+
 
 /// Event sourcing capability
 impl SourcePlugin for RandomGenPlugin {
@@ -143,26 +191,26 @@ impl RandomGenPlugin {
 }
 
 /// Event Parsing Capability
-// impl ParsePlugin for RandomGenPlugin {
-//     const EVENT_TYPES: &'static [EventType] = &[]; // inspect all events...
-//     const EVENT_SOURCES: &'static [&'static str] = &["random_generator"]; // ... from this plugin's source
-//
-//     fn parse_event(&mut self, event: &EventInput, _parse_input: &ParseInput) -> Result<(), Error> {
-//         let event = event.event()?;
-//         let event = event.load::<PluginEvent>()?;
-//         let buf = event
-//             .params
-//             .event_data
-//             .ok_or_else(|| anyhow!("Missing event data"))?;
-//
-//         let num = u64::from_le_bytes(buf.try_into()?);
-//
-//         // increase the number of occurrences of `num` in the histogram
-//         *self.histogram.entry(num).or_insert(0) += 1;
-//
-//         Ok(())
-//     }
-// }
+impl ParsePlugin for RandomGenPlugin {
+    const EVENT_TYPES: &'static [EventType] = &[]; // inspect all events...
+    const EVENT_SOURCES: &'static [&'static str] = &["random_generator"]; // ... from this plugin's source
+
+    fn parse_event(&mut self, event: &EventInput, _parse_input: &ParseInput) -> Result<(), Error> {
+        let event = event.event()?;
+        let event = event.load::<PluginEvent>()?;
+        let buf = event
+            .params
+            .event_data
+            .ok_or_else(|| anyhow!("Missing event data"))?;
+
+        let num = u64::from_le_bytes(buf.try_into()?);
+
+        // increase the number of occurrences of `num` in the histogram
+        *self.histogram.entry(num).or_insert(0) += 1;
+
+        Ok(())
+    }
+}
 
 /// Implement the field extraction capability
 /// https://falco.org/docs/plugins/architecture/#field-extraction-capability
@@ -193,3 +241,5 @@ impl ExtractPlugin for RandomGenPlugin {
 plugin!(RandomGenPlugin);
 source_plugin!(RandomGenPlugin);
 extract_plugin!(RandomGenPlugin);
+parse_plugin!(RandomGenPlugin);
+async_event_plugin!(RandomGenPlugin);
