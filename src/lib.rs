@@ -1,22 +1,21 @@
-use falco_plugin::anyhow::{anyhow, bail, Error};
+use falco_plugin::anyhow::{anyhow, Error};
 use falco_plugin::async_event::{AsyncEvent, AsyncEventPlugin, AsyncHandler};
 use falco_plugin::base::{Json, Plugin};
-use falco_plugin::event::events::types::{EventType, PPME_PLUGINEVENT_E};
+use falco_plugin::event::events::types::{EventType};
 use falco_plugin::event::events::{Event, EventMetadata};
 use falco_plugin::extract::{field, EventInput, ExtractFieldInfo, ExtractPlugin, ExtractRequest};
 use falco_plugin::parse::{ParseInput, ParsePlugin};
 use falco_plugin::schemars::JsonSchema;
 use falco_plugin::serde::Deserialize;
-use falco_plugin::source::{EventBatch, PluginEvent, SourcePlugin, SourcePluginInstance};
-use falco_plugin::strings::CStringWriter;
+use falco_plugin::source::{PluginEvent};
 use falco_plugin::tables::TablesInput;
-use falco_plugin::{anyhow, async_event_plugin, extract_plugin, parse_plugin, plugin, source_plugin};
-use rand::prelude::ThreadRng;
+use falco_plugin::{
+    async_event_plugin, extract_plugin, parse_plugin, plugin,
+};
 use rand::rngs::StdRng;
 use rand::{Rng, SeedableRng};
 use std::collections::BTreeMap;
-use std::ffi::{CStr, CString};
-use std::io::Write;
+use std::ffi::{CStr};
 use std::sync::{Arc, Mutex};
 use std::thread::{sleep, spawn};
 
@@ -63,58 +62,6 @@ impl Plugin for RandomGenPlugin {
     }
 }
 
-/// Plugin instance
-pub struct RandomGenPluginInstance;
-
-impl SourcePluginInstance for RandomGenPluginInstance {
-    type Plugin = RandomGenPlugin;
-
-    /// # Fill the next batch of events
-    ///
-    fn next_batch(
-        &mut self,
-        plugin: &mut Self::Plugin,
-        batch: &mut EventBatch,
-    ) -> Result<(), anyhow::Error> {
-        Ok(())
-    }
-}
-
-/// Implement SourcePluginInstance and generate the events
-impl SourcePlugin for RandomGenPlugin {
-    type Instance = RandomGenPluginInstance;
-    const EVENT_SOURCE: &'static CStr = c"random_generator";
-    const PLUGIN_ID: u32 = 1234;
-
-    fn open(&mut self, params: Option<&str>) -> Result<Self::Instance, Error> {
-        Ok(RandomGenPluginInstance)
-    }
-
-    fn event_to_string(&mut self, event: &EventInput) -> Result<CString, Error> {
-        // Make sure we have a plugin event and parse it into individual fields
-        let event = event.event()?;
-        let event = event.load::<PPME_PLUGINEVENT_E>()?;
-
-        if event.params.plugin_id != Some(Self::PLUGIN_ID) {
-            // Falco shouldn't call this method for events from other plugins
-            bail!("Plugin IDs don't match");
-        }
-
-        // All event fields are optional, so we have to check if the data is actually there
-        match event.params.event_data {
-            Some(payload) => {
-                // CStringWriter is a small helper that lets you write arbitrary data
-                // (e.g. using format strings) into CStrings. Note that as CStrings cannot
-                // contain NUL bytes, any attempt to write one will fail.
-                let mut writer = CStringWriter::default();
-                writer.write_all(payload)?;
-                Ok(writer.into_cstring())
-            }
-            None => Ok(CString::new("<no payload>")?),
-        }
-    }
-}
-
 impl AsyncEventPlugin for RandomGenPlugin {
     const ASYNC_EVENTS: &'static [&'static str] = &["random_number"]; // generate any async events
     const EVENT_SOURCES: &'static [&'static str] = &[]; // attach to all event sources
@@ -126,30 +73,28 @@ impl AsyncEventPlugin for RandomGenPlugin {
     fn start_async(&mut self, handler: AsyncHandler) -> Result<(), Error> {
         let rng = self.thread_range.clone();
         let range = self.range;
-        spawn(move || {
-            loop {
-                let num: u64 = rng.lock().unwrap().gen_range(0..range);
-                let event = num.to_le_bytes().to_vec();
-                let event = AsyncEvent {
-                    plugin_id: Some(1234),
-                    name: Some(c"random_number"),
-                    data: Some(&event),
-                };
-                let metadata = EventMetadata::default();
-                let event = Event {
-                    metadata,
-                    params: event,
-                };
-                match handler.emit(event) {
-                    Ok(_) => {
-                        println!("Async event emitted {}", num);
-                    }
-                    Err(e) => {
-                        eprintln!("Error emitting async event: {:?}", e);
-                    }
+        spawn(move || loop {
+            let num: u64 = rng.lock().unwrap().gen_range(0..range);
+            let event = num.to_le_bytes().to_vec();
+            let event = AsyncEvent {
+                plugin_id: Some(1234),
+                name: Some(c"random_number"),
+                data: Some(&event),
+            };
+            let metadata = EventMetadata::default();
+            let event = Event {
+                metadata,
+                params: event,
+            };
+            match handler.emit(event) {
+                Ok(_) => {
+                    println!("Async event emitted {}", num);
                 }
-                sleep(std::time::Duration::from_secs(1));
+                Err(e) => {
+                    eprintln!("Error emitting async event: {:?}", e);
+                }
             }
+            sleep(std::time::Duration::from_secs(1));
         });
         Ok(())
     }
@@ -158,7 +103,6 @@ impl AsyncEventPlugin for RandomGenPlugin {
         Ok(())
     }
 }
-
 
 impl RandomGenPlugin {
     /// Reads the raw event payload and converts it to u64 value.
@@ -176,7 +120,7 @@ impl RandomGenPlugin {
         // Get the count of occurrences of `num` from `self.histogram`.
         // If the number isn't there (hasn't been generated even once),
         // return zero
-        if let Ok(mut guard) = self.histogram.lock() {
+        if let Ok(guard) = self.histogram.lock() {
             match guard.get(&num) {
                 Some(count) => Ok(*count),
                 None => Ok(0),
@@ -238,7 +182,6 @@ impl ExtractPlugin for RandomGenPlugin {
 }
 
 plugin!(RandomGenPlugin);
-source_plugin!(RandomGenPlugin);
 extract_plugin!(RandomGenPlugin);
 parse_plugin!(RandomGenPlugin);
 async_event_plugin!(RandomGenPlugin);
