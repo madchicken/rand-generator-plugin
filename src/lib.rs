@@ -108,11 +108,8 @@ impl RandomGenPlugin {
     /// Reads the raw event payload and converts it to u64 value.
     fn extract_number(&mut self, req: ExtractRequest<Self>) -> Result<u64, Error> {
         let event = req.event.event()?;
-        let event = event.load::<PluginEvent>()?;
-        let buf = event
-            .params
-            .event_data
-            .ok_or_else(|| anyhow!("Missing event data"))?;
+        let async_event = event.load::<AsyncEvent>()?;
+        let buf = async_event.params.data.ok_or_else(|| anyhow!("Missing event data"))?;
         Ok(u64::from_le_bytes(buf.try_into()?))
     }
 
